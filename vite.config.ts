@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
@@ -175,6 +175,35 @@ export default defineConfig(({ command, isPreview }) => ({
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
             serverDir: "./server",
+            // PGLite's WASM bundle is inlined into `_libs/*.mjs`. It then
+            // `open()`s `./pglite.data` (and the wasm sidecars) next to that
+            // chunk. Nitro does not trace those binary sidecars, so Vercel
+            // 500s with ENOENT `/var/task/_libs/pglite.data`.
+            vercel: {
+              functions: {
+                memory: 1024,
+                maxDuration: 60,
+              },
+            },
+            // Do not set `hooks.compiled` here — that replaces the preset hook
+            // that writes `.vercel/output/config.json` and `.vc-config.json`.
+            modules: [
+              {
+                setup(built) {
+                  built.hooks.hook("compiled", (nitro) => {
+                    const srcDir = join(
+                      nitro.options.rootDir,
+                      "node_modules/@electric-sql/pglite/dist",
+                    );
+                    const destDir = join(nitro.options.output.serverDir, "_libs");
+                    mkdirSync(destDir, { recursive: true });
+                    for (const file of ["pglite.data", "pglite.wasm", "initdb.wasm"]) {
+                      copyFileSync(join(srcDir, file), join(destDir, file));
+                    }
+                  });
+                },
+              },
+            ],
           }),
         ]
       : []),
